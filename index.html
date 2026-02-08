@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Risk-Aware USDC Vault</title>
+  <style>
+    :root{
+      --bg:#070b16; --panel:#101a2fcc; --line:#2a3c63; --txt:#eaf1ff; --muted:#9cb0d8;
+      --ok:#20c77b; --err:#ff5d76; --warn:#f6b547; --b1:#2e57a0; --b2:#2a3248;
+      --shadow:0 12px 34px rgba(0,0,0,.35); --r:16px;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--txt);
+      background:
+        radial-gradient(900px 500px at 10% -10%, #294a8a44, transparent 60%),
+        radial-gradient(900px 550px at 100% 0%, #4a2e8640, transparent 60%),
+        var(--bg);
+    }
+    .wrap{max-width:1120px;margin:0 auto;padding:20px}
+    .top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+    .title{font-weight:900;font-size:1.45rem}
+    .sub{color:var(--muted);font-size:.92rem;margin-top:4px}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .pill{border:1px solid var(--line);background:#0d1528;border-radius:999px;padding:6px 10px;font-size:.82rem;color:#c9d8f7}
+    .dot{display:inline-block;width:8px;height:8px;border-radius:999px;margin-right:6px;background:#61749c}
+    .ok{background:var(--ok)} .err{background:var(--err)} .warn{background:var(--warn)}
+    .card{
+      background:linear-gradient(180deg,var(--panel),#101c33cc);border:1px solid var(--line);
+      border-radius:var(--r);box-shadow:var(--shadow);padding:14px;margin-bottom:14px;
+    }
+    .card h3{margin:0 0 10px;font-size:1rem}
+    .grid{display:grid;grid-template-columns:1.25fr .75fr;gap:14px}
+    @media(max-width:980px){.grid{grid-template-columns:1fr}}
+    .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    @media(max-width:600px){.stats{grid-template-columns:1fr}}
+    .box{border:1px solid #2c3f67;background:#0f172a;border-radius:12px;padding:10px}
+    .label{font-size:.78rem;color:var(--muted)}
+    .val{margin-top:4px;font-weight:700;word-break:break-all}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    input{
+      width:100%;padding:11px 12px;border-radius:12px;border:1px solid var(--line);
+      background:#0f1729;color:var(--txt);outline:none
+    }
+    input:focus{border-color:#4f73b2}
+    button{
+      border:1px solid #4567a2;background:linear-gradient(180deg,#3763b0,#284c88);color:white;
+      padding:10px 14px;border-radius:12px;font-weight:800;cursor:pointer;box-shadow:var(--shadow);transition:.15s;
+    }
+    button.secondary{background:linear-gradient(180deg,#3a4664,#2b344d);border-color:#526386}
+    button.ghost{background:transparent;border-color:var(--line);box-shadow:none}
+    button:hover{transform:translateY(-1px)}
+    button:disabled{opacity:.55;cursor:not-allowed;transform:none}
+    .status{
+      border:1px solid #315084;background:#101f3f;color:#d7e6ff;border-radius:12px;padding:10px 12px;min-height:44px
+    }
+    .status.ok{border-color:#2d6b50;background:#0f2b22;color:#bdf2d9}
+    .status.err{border-color:#7d2f41;background:#2b1119;color:#ffd7df}
+    .status.warn{border-color:#7d622f;background:#2b2212;color:#ffe7bf}
+    details summary{cursor:pointer;font-weight:800;color:#cfe0ff}
+    .tiny{font-size:.8rem;color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <div class="title">Risk-Aware USDC Vault</div>
+        <div class="sub">Simple user flow + role-based admin + newcomer gas sponsorship</div>
+      </div>
+      <div class="row">
+        <button id="connectBtn">Connect Wallet</button>
+        <button id="refreshBtn" class="secondary">Refresh</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-bottom:10px">
+      <span class="pill"><span id="wDot" class="dot"></span><span id="walletTxt">Wallet not connected</span></span>
+      <span class="pill"><span id="cDot" class="dot"></span><span id="chainTxt">Chain: -</span></span>
+      <span class="pill"><span id="sDot" class="dot"></span><span id="sponsorTxt">Sponsor: unknown</span></span>
+    </div>
+
+    <div id="setupCard" class="card" style="display:none;">
+      <h3>Setup Required</h3>
+      <div id="setupMsg" class="status err">Controller/Vault linkage is incomplete.</div>
+      <div class="row" style="margin-top:10px">
+        <button id="fixSetVaultBtn" class="secondary">Fix: setVault(controller)</button>
+        <button id="fixSetControllerBtn" class="secondary">Fix: setRiskController(vault)</button>
+      </div>
+      <div class="tiny" style="margin-top:8px">ეს ღილაკები იმუშავებს მხოლოდ admin/owner wallet-ზე.</div>
+    </div>
+
+    <div class="grid">
+      <!-- USER SIDE -->
+      <div>
+        <div class="card">
+          <h3>Quick Actions</h3>
+          <div class="stats">
+            <div class="box"><div class="label">My USDC</div><div id="myUsdc" class="val">-</div></div>
+            <div class="box"><div class="label">My Shares</div><div id="myShares" class="val">-</div></div>
+            <div class="box"><div class="label">Allowance to Vault</div><div id="allowance" class="val">-</div></div>
+            <div class="box"><div class="label">Estimated Assets</div><div id="estAssets" class="val">-</div></div>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <div style="flex:1;min-width:180px">
+              <div class="label">USDC Amount</div>
+              <input id="assetsInput" placeholder="e.g. 1.5" />
+            </div>
+            <div style="flex:1;min-width:180px">
+              <div class="label">Shares Amount</div>
+              <input id="sharesInput" placeholder="e.g. 1.0" />
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <button id="approveBtn">Approve</button>
+            <button id="depositBtn">Deposit</button>
+            <button id="withdrawBtn">Withdraw</button>
+            <button id="redeemBtn">Redeem</button>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <button id="checkDepositBtn" class="ghost">Check Deposit Rule</button>
+            <button id="checkWithdrawBtn" class="ghost">Check Withdraw Rule</button>
+            <button id="previewDepositBtn" class="ghost">Preview Deposit</button>
+            <button id="previewRedeemBtn" class="ghost">Preview Redeem</button>
+          </div>
+
+          <div id="actionStatus" class="status" style="margin-top:10px">Ready.</div>
+        </div>
+      </div>
+
+      <!-- STATUS + ADMIN -->
+      <div>
+        <div class="card">
+          <h3>Live Status</h3>
+          <div class="stats">
+            <div class="box"><div class="label">Vault</div><div id="vaultAddr" class="val mono">-</div></div>
+            <div class="box"><div class="label">Controller</div><div id="controllerAddr" class="val mono">-</div></div>
+            <div class="box"><div class="label">Controller.vault</div><div id="ctrlVault" class="val mono">-</div></div>
+            <div class="box"><div class="label">Vault.riskController</div><div id="vaultCtrl" class="val mono">-</div></div>
+            <div class="box"><div class="label">Total Assets</div><div id="totalAssets" class="val">-</div></div>
+            <div class="box"><div class="label">Total Supply</div><div id="totalSupply" class="val">-</div></div>
+            <div class="box"><div class="label">Paused Flags</div><div id="pauseFlags" class="val">-</div></div>
+            <div class="box"><div class="label">Asset Symbol</div><div id="assetSymbol" class="val">-</div></div>
+          </div>
+        </div>
+
+        <details id="adminCard" class="card" style="display:none">
+          <summary>Admin Console</summary>
+          <div style="margin-top:10px">
+            <div class="row">
+              <input id="setVaultInput" placeholder="Vault address for controller.setVault(...)" />
+              <button id="setVaultBtn" class="secondary">Set Vault</button>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <input id="setCtrlInput" placeholder="Controller address for vault.setRiskController(...)" />
+              <button id="setCtrlBtn" class="secondary">Set Risk Controller</button>
+            </div>
+
+            <div class="row" style="margin-top:10px">
+              <button id="allOn" class="ghost">All Pause ON</button>
+              <button id="allOff" class="ghost">All Pause OFF</button>
+              <button id="depOn" class="ghost">Dep Pause ON</button>
+              <button id="depOff" class="ghost">Dep Pause OFF</button>
+              <button id="wdOn" class="ghost">Wd Pause ON</button>
+              <button id="wdOff" class="ghost">Wd Pause OFF</button>
+            </div>
+
+            <div class="row" style="margin-top:10px">
+              <input id="blockUserInput" placeholder="user address" />
+              <button id="blockBtn" class="ghost">Block</button>
+              <button id="unblockBtn" class="ghost">Unblock</button>
+            </div>
+
+            <div id="adminStatus" class="status" style="margin-top:10px">Admin ready.</div>
+          </div>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { ethers } from "https://cdn.jsdelivr.net/npm/ethers@6.13.2/+esm";
+
+    
+    const VAULT = "0x878bFCEf38Cd02bEb2B95FA91D42A0baf2EBf9E8";
+    const CONTROLLER = "0xeb8D26ba7f5551e40851E9a3F4A082049041B6e4";
+    const API_BASE = "http://localhost:8787/api"; // backend URL
+    const EXPECTED_CHAIN_ID = null; // ex: 97 or 56. null = any
+
+    const DEFAULT_ADMIN_ROLE = "0x" + "00".repeat(32);
+    const RISK_ADMIN_ROLE = ethers.id("RISK_ADMIN_ROLE");
+    const PAUSER_ROLE = ethers.id("PAUSER_ROLE");
+    const OPERATOR_ROLE = ethers.id("OPERATOR_ROLE");
+
+    const VAULT_ABI = [
+      "function asset() view returns (address)",
+      "function owner() view returns (address)",
+      "function paused() view returns (bool)",
+      "function riskController() view returns (address)",
+      "function totalAssets() view returns (uint256)",
+      "function totalSupply() view returns (uint256)",
+      "function decimals() view returns (uint8)",
+      "function balanceOf(address) view returns (uint256)",
+      "function convertToAssets(uint256 shares) view returns (uint256)",
+      "function previewDeposit(uint256 assets) view returns (uint256)",
+      "function previewRedeem(uint256 shares) view returns (uint256)",
+      "function deposit(uint256 assets, address receiver) returns (uint256)",
+      "function withdraw(uint256 assets, address receiver, address owner) returns (uint256)",
+      "function redeem(uint256 shares, address receiver, address owner) returns (uint256)",
+      "function setRiskController(address)"
+    ];
+
+    const CONTROLLER_ABI = [
+      "function vault() view returns (address)",
+      "function allPaused() view returns (bool)",
+      "function depositsPaused() view returns (bool)",
+      "function withdrawalsPaused() view returns (bool)",
+      "function canDeposit(address, uint256) view returns (bool, string)",
+      "function canWithdraw(address, uint256) view returns (bool, string)",
+      "function hasRole(bytes32,address) view returns (bool)",
+      "function setVault(address)",
+      "function setAllPaused(bool)",
+      "function setDepositsPaused(bool)",
+      "function setWithdrawalsPaused(bool)",
+      "function setUserBlocked(address,bool)"
+    ];
+
+    const ERC20_ABI = [
+      "function symbol() view returns (string)",
+      "function decimals() view returns (uint8)",
+      "function balanceOf(address) view returns (uint256)",
+      "function allowance(address,address) view returns (uint256)",
+      "function approve(address,uint256) returns (bool)"
+    ];
+
+    let provider, signer, user;
+    let vaultR, ctrlR, usdcR, vaultW, ctrlW, usdcW;
+    let usdcDecimals = 6, shareDecimals = 18, symbol = "USDC";
+    let setupOk = false, isAdmin = false;
+    let sponsorRemaining = 0;
+
+    const $ = (id)=>document.getElementById(id);
+
+    const fmt = (v,d=18,p=6)=>{
+      try{
+        const s = ethers.formatUnits(v,d); const [i,f=""]=s.split(".");
+        return f ? `${i}.${f.slice(0,p)}` : i;
+      }catch{return "-";}
+    };
+    const parseAmt=(v,d)=>{const t=(v||"").trim(); if(!t) return 0n; return ethers.parseUnits(t,d);};
+    const short=(a)=>a?`${a.slice(0,6)}...${a.slice(-4)}`:"-";
+
+    function setStatus(id,msg,type=""){
+      const el=$(id); el.className="status"+(type?` ${type}`:""); el.textContent=msg;
+    }
+
+    function disableUser(dis){
+      ["approveBtn","depositBtn","withdrawBtn","redeemBtn","checkDepositBtn","checkWithdrawBtn","previewDepositBtn","previewRedeemBtn"]
+      .forEach(id=>$(id).disabled=dis);
+    }
+
+    function errMsg(e){
+      return e?.shortMessage || e?.reason || e?.info?.error?.message || e?.message || "Transaction failed";
+    }
+
+    async function fetchSponsorEligibility(address){
+      try{
+        const r = await fetch(`${API_BASE}/eligibility/${address}`);
+        if(!r.ok) throw new Error("sponsor api error");
+        const data = await r.json();
+        sponsorRemaining = Number(data.remaining || 0);
+        $("sDot").className = "dot " + (data.eligible ? "ok" : "warn");
+        $("sponsorTxt").textContent = data.eligible
+          ? `Sponsor active: ${data.remaining} tx left`
+          : "Sponsor inactive";
+      }catch{
+        $("sDot").className = "dot warn";
+        $("sponsorTxt").textContent = "Sponsor API unavailable";
+      }
+    }
+
+    async function maybeClaimGas(txHash, action){
+      if(!user) return;
+      try{
+        const r = await fetch(`${API_BASE}/claim-gas`, {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ address:user, txHash, action })
+        });
+        const data = await r.json();
+        if(data.ok){
+          sponsorRemaining = data.remaining;
+          $("sDot").className = "dot ok";
+          $("sponsorTxt").textContent = `Sponsor active: ${data.remaining} tx left`;
+          setStatus("actionStatus", `Success + gas reimbursed (${data.reimbursedNative})`, "ok");
+        } else {
+          if (data.code === "not_eligible") {
+            $("sDot").className = "dot warn";
+            $("sponsorTxt").textContent = "Sponsor inactive";
+          }
+        }
+      }catch{}
+    }
+
+    async function connect(){
+      try{
+        if(!window.ethereum) return setStatus("actionStatus","MetaMask not found","err");
+        provider = new ethers.BrowserProvider(window.ethereum);
+        await provider.send("eth_requestAccounts",[]);
+        signer = await provider.getSigner();
+        user = await signer.getAddress();
+
+        vaultR = new ethers.Contract(VAULT, VAULT_ABI, provider);
+        ctrlR  = new ethers.Contract(CONTROLLER, CONTROLLER_ABI, provider);
+        vaultW = vaultR.connect(signer);
+        ctrlW  = ctrlR.connect(signer);
+
+        const asset = await vaultR.asset();
+        usdcR = new ethers.Contract(asset, ERC20_ABI, provider);
+        usdcW = usdcR.connect(signer);
+
+        usdcDecimals = Number(await usdcR.decimals());
+        shareDecimals = Number(await vaultR.decimals());
+        symbol = await usdcR.symbol().catch(()=> "USDC");
+
+        $("wDot").className = "dot ok";
+        $("walletTxt").textContent = `${short(user)} connected`;
+
+        await fetchSponsorEligibility(user);
+
+        const shownKey = `welcome_shown_${user.toLowerCase()}`;
+        if(!localStorage.getItem(shownKey)){
+          setStatus("actionStatus","Welcome! If your wallet is eligible, first 5 successful app tx gas will be reimbursed.", "warn");
+          localStorage.setItem(shownKey,"1");
+        }
+
+        await refresh();
+      }catch(e){
+        setStatus("actionStatus", errMsg(e), "err");
+      }
+    }
+
+    async function refresh(){
+      try{
+        $("vaultAddr").textContent = VAULT;
+        $("controllerAddr").textContent = CONTROLLER;
+        $("assetSymbol").textContent = symbol;
+
+        if(!provider){ disableUser(true); return; }
+
+        const net = await provider.getNetwork();
+        $("cDot").className = "dot ok";
+        $("chainTxt").textContent = `Chain: ${net.name} (${net.chainId})`;
+
+        if(EXPECTED_CHAIN_ID !== null && Number(net.chainId)!==Number(EXPECTED_CHAIN_ID)){
+          disableUser(true);
+          return setStatus("actionStatus", `Wrong chain. Switch to ${EXPECTED_CHAIN_ID}`, "err");
+        }
+
+        const [cv, vrc, ta, ts, vp, ap, dp, wp] = await Promise.all([
+          ctrlR.vault(),
+          vaultR.riskController(),
+          vaultR.totalAssets(),
+          vaultR.totalSupply(),
+          vaultR.paused(),
+          ctrlR.allPaused(),
+          ctrlR.depositsPaused(),
+          ctrlR.withdrawalsPaused()
+        ]);
+
+        $("ctrlVault").textContent = cv;
+        $("vaultCtrl").textContent = vrc;
+        $("totalAssets").textContent = `${fmt(ta,usdcDecimals)} ${symbol}`;
+        $("totalSupply").textContent = fmt(ts,shareDecimals);
+        $("pauseFlags").textContent = `vault:${vp?"ON":"OFF"} | all:${ap?"ON":"OFF"} | dep:${dp?"ON":"OFF"} | wd:${wp?"ON":"OFF"}`;
+
+        setupOk = (cv.toLowerCase()===VAULT.toLowerCase() && vrc.toLowerCase()===CONTROLLER.toLowerCase());
+
+        if(!setupOk){
+          $("setupCard").style.display = "block";
+          $("setupMsg").textContent = "Setup incomplete: controller.vault or vault.riskController mismatch.";
+          disableUser(true);
+        }else{
+          $("setupCard").style.display = "none";
+          disableUser(false);
+        }
+
+        if(user){
+          const [b,sh,allow,owner,ra,pa,oa] = await Promise.all([
+            usdcR.balanceOf(user),
+            vaultR.balanceOf(user),
+            usdcR.allowance(user, VAULT),
+            vaultR.owner(),
+            ctrlR.hasRole(RISK_ADMIN_ROLE,user).catch(()=>false),
+            ctrlR.hasRole(PAUSER_ROLE,user).catch(()=>false),
+            ctrlR.hasRole(OPERATOR_ROLE,user).catch(()=>false)
+          ]);
+
+          $("myUsdc").textContent = `${fmt(b,usdcDecimals)} ${symbol}`;
+          $("myShares").textContent = fmt(sh,shareDecimals);
+          $("allowance").textContent = `${fmt(allow,usdcDecimals)} ${symbol}`;
+          const est = await vaultR.convertToAssets(sh);
+          $("estAssets").textContent = `${fmt(est,usdcDecimals)} ${symbol}`;
+
+          const isOwner = owner.toLowerCase()===user.toLowerCase();
+          const isDefAdmin = await ctrlR.hasRole(DEFAULT_ADMIN_ROLE,user).catch(()=>false);
+          isAdmin = isOwner || isDefAdmin || ra || pa || oa;
+          $("adminCard").style.display = isAdmin ? "block" : "none";
+          $("fixSetVaultBtn").style.display = isAdmin ? "inline-block" : "none";
+          $("fixSetControllerBtn").style.display = isAdmin ? "inline-block" : "none";
+        }
+      }catch(e){
+        setStatus("actionStatus", errMsg(e), "err");
+      }
+    }
+
+    async function approve(){
+      try{
+        if(!signer) return setStatus("actionStatus","Connect wallet first","err");
+        const assets = parseAmt($("assetsInput").value, usdcDecimals);
+        if(assets<=0n) return setStatus("actionStatus","Enter USDC amount","err");
+
+        setStatus("actionStatus","Sending approve...");
+        const tx = await usdcW.approve(VAULT, assets);
+        await tx.wait();
+        await maybeClaimGas(tx.hash,"approve");
+        setStatus("actionStatus",`Approve success: ${tx.hash}`,"ok");
+        await refresh();
+      }catch(e){ setStatus("actionStatus",errMsg(e),"err"); }
+    }
+
+    async function deposit(){
+      try{
+        if(!signer) return setStatus("actionStatus","Connect wallet first","err");
+        if(!setupOk) return setStatus("actionStatus","Setup incomplete","err");
+
+        const assets = parseAmt($("assetsInput").value, usdcDecimals);
+        if(assets<=0n) return setStatus("actionStatus","Enter USDC amount","err");
+
+        const [ok,reason] = await ctrlR.canDeposit(user, assets);
+        if(!ok) return setStatus("actionStatus",`Blocked by risk policy: ${reason}`,"err");
+
+        const allowance = await usdcR.allowance(user, VAULT);
+        if(allowance < assets){
+          setStatus("actionStatus","Allowance low. Approving first...");
+          const a = await usdcW.approve(VAULT, assets);
+          await a.wait();
+          await maybeClaimGas(a.hash,"approve");
+        }
+
+        setStatus("actionStatus","Sending deposit...");
+        const tx = await vaultW.deposit(assets, user);
+        await tx.wait();
+        await maybeClaimGas(tx.hash,"deposit");
+        setStatus("actionStatus",`Deposit success: ${tx.hash}`,"ok");
+        await refresh();
+      }catch(e){ setStatus("actionStatus",errMsg(e),"err"); }
+    }
+
+    async function withdraw(){
+      try{
+        if(!signer) return setStatus("actionStatus","Connect wallet first","err");
+        if(!setupOk) return setStatus("actionStatus","Setup incomplete","err");
+
+        const assets = parseAmt($("assetsInput").value, usdcDecimals);
+        if(assets<=0n) return setStatus("actionStatus","Enter USDC amount","err");
+
+        const [ok,reason] = await ctrlR.canWithdraw(user, assets);
+        if(!ok) return setStatus("actionStatus",`Blocked by risk policy: ${reason}`,"err");
+
+        setStatus("actionStatus","Sending withdraw...");
+        const tx = await vaultW.withdraw(assets, user, user);
+        await tx.wait();
+        await maybeClaimGas(tx.hash,"withdraw");
+        setStatus("actionStatus",`Withdraw success: ${tx.hash}`,"ok");
+        await refresh();
+      }catch(e){ setStatus("actionStatus",errMsg(e),"err"); }
+    }
+
+    async function redeem(){
+      try{
+        if(!signer) return setStatus("actionStatus","Connect wallet first","err");
+        if(!setupOk) return setStatus("actionStatus","Setup incomplete","err");
+
+        const shares = parseAmt($("sharesInput").value, shareDecimals);
+        if(shares<=0n) return setStatus("actionStatus","Enter shares amount","err");
+
+        const assets = await vaultR.previewRedeem(shares);
+        const [ok,reason] = await ctrlR.canWithdraw(user, assets);
+        if(!ok) return setStatus("actionStatus",`Blocked by risk policy: ${reason}`,"err");
+
+        setStatus("actionStatus","Sending redeem...");
+        const tx = await vaultW.redeem(shares, user, user);
+        await tx.wait();
+        await maybeClaimGas(tx.hash,"redeem");
+        setStatus("actionStatus",`Redeem success: ${tx.hash}`,"ok");
+        await refresh();
+      }catch(e){ setStatus("actionStatus",errMsg(e),"err"); }
+    }
+
+    async function checkDeposit(){
+      try{
+        const assets = parseAmt($("assetsInput").value, usdcDecimals);
+        const [ok, reason] = await ctrlR.canDeposit(user, assets);
+        setStatus("actionStatus", ok ? "Deposit rule: OK ✅" : `Deposit blocked: ${reason}`, ok?"ok":"err");
+      }catch(e){ setStatus("actionStatus",errMsg(e),"err"); }
+    }
+
+    async function checkWithdraw(){
+      try{
+        const assets = parseAmt($("assetsInput").value, usdcDecimals);
+        const [ok, reason] = await ctrlR.canWithdraw(user, assets);
+        setStatus("actionStatus", ok ? "Withdraw rule: OK ✅" : `Withdraw blocked: ${reason}`, ok?"ok":"err");
+      }catch(e){ setStatus("actionStatus",errMsg(e),"err"); }
+    }
+
+    async function previewDeposit(){
+      try{
+        const assets = parseAmt($("assetsInput").value, usdcDecimals);
+        const sh = await vaultR.previewDeposit(assets);
+        setStatus("actionStatus",`Preview: ${fmt(assets,usdcDecimals)} ${symbol} -> ${fmt(sh,shareDecimals)} shares`,"ok");
+      }catch(e){ setStatus("actionStatus",errMsg(e),"err"); }
+    }
+
+    async function previewRedeem(){
+      try{
+        const sh = parseAmt($("sharesInput").value, shareDecimals);
+        const assets = await vaultR.previewRedeem(sh);
+        setStatus("actionStatus",`Preview: ${fmt(sh,shareDecimals)} shares -> ${fmt(assets,usdcDecimals)} ${symbol}`,"ok");
+      }catch(e){ setStatus("actionStatus",errMsg(e),"err"); }
+    }
+
+    async function adminCall(label, fn){
+      try{
+        if(!isAdmin) return setStatus("adminStatus","No admin permission","err");
+        setStatus("adminStatus",`${label}...`);
+        const tx = await fn();
+        await tx.wait();
+        setStatus("adminStatus",`${label} success: ${tx.hash}`,"ok");
+        await refresh();
+      }catch(e){ setStatus("adminStatus",errMsg(e),"err"); }
+    }
+
+    // Bind
+    $("connectBtn").onclick = connect;
+    $("refreshBtn").onclick = refresh;
+
+    $("approveBtn").onclick = approve;
+    $("depositBtn").onclick = deposit;
+    $("withdrawBtn").onclick = withdraw;
+    $("redeemBtn").onclick = redeem;
+
+    $("checkDepositBtn").onclick = checkDeposit;
+    $("checkWithdrawBtn").onclick = checkWithdraw;
+    $("previewDepositBtn").onclick = previewDeposit;
+    $("previewRedeemBtn").onclick = previewRedeem;
+
+    $("fixSetVaultBtn").onclick = ()=>adminCall("setVault", ()=>ctrlW.setVault(VAULT));
+    $("fixSetControllerBtn").onclick = ()=>adminCall("setRiskController", ()=>vaultW.setRiskController(CONTROLLER));
+
+    $("setVaultBtn").onclick = ()=>adminCall("setVault", ()=>ctrlW.setVault($("setVaultInput").value.trim()));
+    $("setCtrlBtn").onclick = ()=>adminCall("setRiskController", ()=>vaultW.setRiskController($("setCtrlInput").value.trim()));
+
+    $("allOn").onclick = ()=>adminCall("allPaused ON", ()=>ctrlW.setAllPaused(true));
+    $("allOff").onclick = ()=>adminCall("allPaused OFF", ()=>ctrlW.setAllPaused(false));
+    $("depOn").onclick = ()=>adminCall("depositsPaused ON", ()=>ctrlW.setDepositsPaused(true));
+    $("depOff").onclick = ()=>adminCall("depositsPaused OFF", ()=>ctrlW.setDepositsPaused(false));
+    $("wdOn").onclick = ()=>adminCall("withdrawalsPaused ON", ()=>ctrlW.setWithdrawalsPaused(true));
+    $("wdOff").onclick = ()=>adminCall("withdrawalsPaused OFF", ()=>ctrlW.setWithdrawalsPaused(false));
+    $("blockBtn").onclick = ()=>adminCall("block user", ()=>ctrlW.setUserBlocked($("blockUserInput").value.trim(),true));
+    $("unblockBtn").onclick = ()=>adminCall("unblock user", ()=>ctrlW.setUserBlocked($("blockUserInput").value.trim(),false));
+
+    if(window.ethereum){
+      window.ethereum.on("accountsChanged", ()=>location.reload());
+      window.ethereum.on("chainChanged", ()=>location.reload());
+    }
+
+    $("vaultAddr").textContent = VAULT;
+    $("controllerAddr").textContent = CONTROLLER;
+    disableUser(true);
+  </script>
+</body>
+</html>
